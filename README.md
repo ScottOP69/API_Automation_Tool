@@ -85,7 +85,7 @@ pip install -r requirements.txt
 
 
 
-Limitations
+# Limitations
 
 Beyond Compare must be installed separately.
 
