@@ -84,7 +84,7 @@ def getResponses(collection_sheet, save_loc, db):
                         # Send the request based on the method
                         if(request_method) == "GET":
                             response = session.get(request_url)
-                        elif request_method in ['PSOT','PUT']:
+                        elif request_method in ['POST','PUT']:
                             if request_body and not pd.isna(request_body):
                                 response = session.request(request_method,request_url,json=json.load(request_body))
                             else:
