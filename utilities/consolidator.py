@@ -1,117 +1,73 @@
-import json
-import requests
-import pandas as pd
-import logging
-import time
 import os
+from bs4 import BeautifulSoup
+import xlsxwriter
 
-def getResponses(collection_sheet, save_loc):
-    # Configure the logger
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Define paths (update these to match your environment)
+folder1_path = 'results/comparison-reports'  # Comparison reports folder
+folder2_path = 'results/summary-reports'    # Summary reports folder
+output_path = 'results/FinalReport.xlsx'    # Output Excel file
 
-    # Load the test data workbook
-    test_data_file = ''  # Enter the test data file path
-    test_data = pd.read_excel(test_data_file, sheet_name=None)
+# Extract data from HTML report
+def extract_report_data(html_file_path):
+    with open(html_file_path, 'r', encoding='utf-8') as file:
+        soup = BeautifulSoup(file, 'html.parser')
+        report_data = {}
+        
+        # Extract file paths
+        report_data['left_file'] = soup.text.split('Left file: ')[1].split('&nbsp;')[0].strip()
+        report_data['right_file'] = soup.text.split('Right file: ')[1].split('&nbsp;')[0].strip()
 
-    # Load the Collections sheet to get collection file paths
-    collections_sheet = test_data[collection_sheet]
+        # Extract summary differences
+        lines = soup.text.splitlines()
+        differences = [line.strip() for line in lines if 'important' in line.lower()]
+        report_data['summary'] = "\n".join(differences) if differences else "No differences"
 
-    # Use a session to persist cookies and headers across requests
-    session = requests.Session()
+        # Determine if there are important differences
+        report_data['difference'] = "Yes" if differences else "No"
+        
+        return report_data
 
-    # Iterate over each collection
-    for _, collection_row in collections_sheet.iterrows():
-        collection_name = collection_row['Collection Name']
-        collection_file_path = collection_row['Collection File Path']
-        flag = collection_row['Flag']
-        scenario = collection_row['Scenario']
-        reqUrl = collection_row['Request URL']
+# Generate Excel report
+def generate_excel_report(folder1_path, folder2_path, output_path):
+    workbook = xlsxwriter.Workbook(output_path)
+    worksheet = workbook.add_worksheet()
 
-        if flag:
-            logging.info(f"Starting collection: {collection_name} with Scenario: {scenario}")
+    # Write headers
+    headers = ['File Name', 'Difference', 'Summary', 'Comparison Report Link', 'Summary Report Link']
+    for col_num, header in enumerate(headers):
+        worksheet.write(0, col_num, header)
 
-            with open(collection_file_path, 'r') as file:
-                postman_collection = json.load(file)
+    # Add formatting for hyperlinks
+    hyperlink_format = workbook.add_format({'color': 'blue', 'underline': 1})
 
-            requests_data = postman_collection['item']
-            collection_test_data = test_data[collection_name]
+    # Get the list of HTML files in each folder
+    comparison_files = sorted([f for f in os.listdir(folder1_path) if f.endswith('.html')])
+    summary_files = sorted([f for f in os.listdir(folder2_path) if f.endswith('.html')])
 
-            # Filter scenarios for 'Valid', 'Invalid', 'Null', or 'ALL'
-            scenarios_to_run = ["Valid", "Invalid", "Null"] if scenario == "ALL" else [scenario]
+    for idx, (comp_file, summary_file) in enumerate(zip(comparison_files, summary_files), start=1):
+        # Extract data from the comparison report
+        comp_file_path = os.path.join(folder1_path, comp_file)
+        summary_file_path = os.path.join(folder2_path, summary_file)
 
-            for current_scenario in scenarios_to_run:
-                filtered_test_data = collection_test_data[collection_test_data['Scenario'] == current_scenario]
-                responses = []
+        report_data = extract_report_data(comp_file_path)
 
-                start_time = time.time()
+        # Extract file name
+        file_name = os.path.basename(report_data['left_file'])
 
-                for request in requests_data:
-                    request_name = request['name']
-                    request_url = request['request']['url']['raw'].replace("{{baseURL}}", reqUrl)
-                    request_method = request['request']['method']
+        # Write data to the worksheet
+        worksheet.write(idx, 0, file_name)  # File Name
+        worksheet.write(idx, 1, report_data['difference'])  # Difference
+        worksheet.write(idx, 2, report_data['summary'])  # Summary
 
-                    test_scenarios = filtered_test_data[filtered_test_data['Request Name'] == request_name]
+        # Insert hyperlinks to the reports
+        comp_link = f'file:///{comp_file_path}'
+        summary_link = f'file:///{summary_file_path}'
+        worksheet.write_url(idx, 3, comp_link, hyperlink_format, 'Open Comparison Report')  # Comparison Report Link
+        worksheet.write_url(idx, 4, summary_link, hyperlink_format, 'Open Summary Report')  # Summary Report Link
 
-                    for _, row in test_scenarios.iterrows():
-                        scenario = row['Scenario']
-                        request_body = row['Request Body']
-                        response = None
+    # Close workbook
+    workbook.close()
+    print(f"Report generated successfully at {output_path}")
 
-                        try:
-                            if request_method == "GET":
-                                response = session.get(request_url)
-                            elif request_method in ['POST', 'PUT']:
-                                if request_body and not pd.isna(request_body):
-                                    response = session.request(request_method, request_url, json=json.loads(request_body))
-                                else:
-                                    response = session.request(request_method, request_url)
-
-                            response_time = response.elapsed.total_seconds() if response else 0
-                            status_code = response.status_code if response else "No Response"
-                            response_text = response.json() if response else "Request failed"
-
-                            logging.info(f"Request: {request_name} | Scenario: {scenario} | Status: {status_code} | Time: {response_time:.2f}s")
-
-                            result = {
-                                'Request Name': request_name,
-                                'Scenario': scenario,
-                                'Status Code': status_code,
-                                'Response': response_text,
-                                'Response Time': response_time
-                            }
-                            responses.append(result)
-
-                        except Exception as e:
-                            logging.error(f"Error processing {request_name} ({scenario}): {str(e)}")
-
-                end_time = time.time()
-                total_time = end_time - start_time
-
-                # Save responses to an Excel file
-                responses_df = pd.DataFrame(responses)
-                if scenario == "ALL":
-                    output_file = os.path.join(save_loc, f'{collection_name}_{current_scenario}_Results.xlsx')
-                else:
-                    output_file = os.path.join(save_loc, f'{collection_name}_{scenario}_Results.xlsx')
-
-                responses_df.to_excel(output_file, index=False)
-                logging.info(f"Saved results to: {output_file} | Total Time: {total_time:.2f}s")
-
-    logging.info("All collections processed successfully.")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# Call the function
+generate_excel_report(folder1_path, folder2_path, output_path)
