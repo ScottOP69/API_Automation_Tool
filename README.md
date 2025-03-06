@@ -102,4 +102,9 @@ File comparison only works on files present in the specified folders.
 
 <img width="550" alt="microservice-data" src="https://github.com/user-attachments/assets/f5858a36-c11b-4def-b48d-3ea9a08d76d6" />
 
+# Sample Consolidated Report
+
+<img width="920" alt="image (1)" src="https://github.com/user-attachments/assets/73b76f2f-88c7-447b-8fc4-e433ce3d84e0" />
+
+
 
